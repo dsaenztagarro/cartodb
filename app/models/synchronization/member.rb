@@ -33,9 +33,10 @@ module CartoDB
       # Already at resque, waiting for slot
       STATE_QUEUED   = 'queued'
       # Actually syncing
-      STATE_SYNCING   = 'syncing'
-      STATE_SUCCESS   = 'success'
-      STATE_FAILURE   = 'failure'
+      STATE_SYNCING  = 'syncing'
+      STATE_SUCCESS  = 'success'
+      STATE_MODIFIED = 'modified'
+      STATE_FAILURE  = 'failure'
 
       attribute :id,                      String
       attribute :name,                    String
@@ -219,11 +220,14 @@ module CartoDB
 
         if importer.success?
           set_success_state_from(importer)
+        elsif importer.modified?
+          set_success_state_from(importer, state: STATE_MODIFIED)
+          unsync
         else
           set_failure_state_from(importer)
         end
 
-        store
+        store unless importer.modified?
 
         notify
 
@@ -261,6 +265,18 @@ module CartoDB
         CartoDB::PlatformLimits::Importer::UserConcurrentSyncsAmount.new({
               user: user, redis: { db: $users_metadata }
             }).decrement!
+      end
+
+      # @return [Boolean] Marks whether or not the table has been unsynced
+      def unsync
+        member = self
+        stats_aggregator = CartoDB::Stats::EditorAPIs.instance
+        stats_aggregator.timing('delete') do
+          member.delete
+        end
+        true
+      rescue KeyError
+        false
       end
 
       def notify
@@ -342,10 +358,13 @@ module CartoDB
         end
       end
 
-      def set_success_state_from(importer)
+      # @param [CartoDB::Synchronization::Adapter] importer
+      # @param [Hash] options the options for the current member state
+      # @option opts [String] state The member state
+      def set_success_state_from(importer, options = {})
         log.append     '******** synchronization succeeded ********'
         self.log_trace      = importer.runner_log_trace
-        self.state          = STATE_SUCCESS
+        self.state          = options[:state] || STATE_SUCCESS
         self.etag           = importer.etag
         self.checksum       = importer.checksum
         self.error_code     = nil

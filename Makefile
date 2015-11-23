@@ -268,3 +268,7 @@ cartodbui:
 
 
 .PHONY: develop_cdb cartodbui
+
+.PHONY: fast_spec
+fast_spec:
+	rspec -I fast_spec fast_spec/

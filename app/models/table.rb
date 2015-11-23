@@ -1462,10 +1462,20 @@ class Table
   end
 
   def self.get_column_names(table_name, options={})
+    get_table_schema(table_name, options).map { |column| column[0].to_s }
+  end
+
+  # @param table_name [String]
+  # @param [Hash] options the options to fetch the table schema
+  # @option options [Sequel::Postgres::Database] :connection
+  # @option options [String] :schema ('public') The database schema
+  # @return [Array<Symbol,Hash>] The schema of the table as key value pairs.
+  #   Each key is a column name, and each value represents the related information
+  #   for the given column
+  def self.get_table_schema(table_name, options={})
     connection = options.fetch(:connection)
     database_schema = options.fetch(:database_schema, 'public')
-    table_schema = connection.schema(table_name, schema: database_schema, reload: true)
-    table_schema.map { |column| column[0].to_s }
+    connection.schema(table_name, schema: database_schema, reload: true)
   end
 
   def get_new_column_type(invalid_column)

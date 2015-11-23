@@ -5,14 +5,15 @@ module CartoDB
     class Adapter
       DESTINATION_SCHEMA = 'public'
 
-      attr_accessor :table
+      attr_accessor :table, :status
 
       def initialize(table_name, runner, database, user)
-        @table_name   = table_name
-        @runner       = runner
-        @database     = database
-        @user         = user
-        @failed       = false
+        @table_name = table_name
+        @runner     = runner
+        @database   = database
+        @user       = user
+        @failed     = false
+        @modified   = false
       end
 
       def run(&tracker)
@@ -25,11 +26,13 @@ module CartoDB
             data_for_exception << "1st result:#{runner.results.first.inspect}"
             raise data_for_exception
           end
+          previous_table_schema = current_table_schema
           copy_privileges(user.database_schema, table_name, result.schema, result.table_name)
           index_statements = generate_index_statements(user.database_schema, table_name)
           overwrite(table_name, result)
           cartodbfy(table_name)
           run_index_statements(index_statements)
+          check_modified(previous_table_schema)
         end
         self
       rescue => exception
@@ -40,6 +43,23 @@ module CartoDB
         puts '=================='
       end
 
+      # Check existing columns on table remain untouched
+      # @param table_schema [Array<Symbol,Hash>] The table schema to compare with
+      def check_modified(table_schema)
+        comparator = TableSchemaComparator.new
+        comparator.compare(table_schema, current_table_schema)
+        @modified = comparator.columns_removed? || comparator.columns_modified?
+      end
+
+      # @return [Array<Symbol,Hash>] The schema of the table as key value pairs.
+      #   Each key is a column name, and each value represents the related
+      #   information for the given column
+      def current_table_schema
+        options = { connection: user.in_database, schema: user.database_schema }
+        Table.get_table_schema(table_name, options)
+      end
+
+      # @return [Boolean] Marks whether the table is overwritten with success
       def overwrite(table_name, result)
         return false unless runner.remote_data_updated?
 
@@ -98,7 +118,13 @@ module CartoDB
       end
 
       def success?
-        (!@failed  && runner.success?)
+        (!@failed && !@modified && runner.success?)
+      end
+
+      # @return [Boolean] Marks whether the synchronization was successfull but
+      #   the table has changes on previously existing columns
+      def modified?
+        @modified && runner.success?
       end
 
       def etag
